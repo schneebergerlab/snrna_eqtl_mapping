@@ -1,0 +1,35 @@
+configfile: 'config.yaml'
+
+include: '../rules/variants.snakefile'
+include: '../rules/genotype.snakefile'
+include: '../rules/diploid.snakefile'
+include: '../rules/crossovers.snakefile'
+include: '../rules/notebooks.snakefile'
+
+SAMPLE_NAMES = glob_wildcards('raw_data/{sample_name}.1.fastq.gz').sample_name
+REF_NAME = config['reference_genotype']
+CONDS = set([sn.rsplit('_', 1)[0] for sn in SAMPLE_NAMES])
+COMPS = [
+    f'{REF_NAME}__vs__{parent2}' for parent2 in config['genome_fasta_fns'] if parent2 != REF_NAME
+]
+
+rule all:
+    input:
+        expand(
+            [
+                'aligned_data/diploid/{cond}.{comp}.sorted.bam',
+                'cb_crossovers/{cond}.tsv',
+                'cb_stats/{cond}.tsv',
+                'eqtls/{cond}.tsv',
+            ],
+            cond=CONDS,
+            comp=COMPS
+        ),
+        expand(
+            'figures/{figtype}_figures_{cond}',
+            figtype=[
+                'expression', 'genotyping',
+                'crossover', 'eqtl'
+            ],
+            cond=CONDS,
+        )

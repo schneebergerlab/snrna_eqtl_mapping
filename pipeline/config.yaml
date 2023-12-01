@@ -1,0 +1,11 @@
+reference_genotype: "col0"
+genome_fasta_fns:
+  col0: '../annotations/col0.fa'
+  db1: '../annotations/db1.fa'
+  kar1: '../annotations/kar1.fa'
+  rubezhnoe1: '../annotations/rubezhnoe1.fa'
+  ms0: '../annotations/ms0.fa'
+  tsu0: '../annotations/tsu0.fa'
+gtf_fns:
+  col0: '../annotations/col0.gtf'
+barcode_whitelist: '../annotations/3M-february-2018.txt'
