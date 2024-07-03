@@ -131,3 +131,13 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# future exps
+*col0xest0tsu0*
+*col0xler*
+*col0xoy0cvi0*
+
+# mac files
+
+._.DS_Store
+.DS_Store

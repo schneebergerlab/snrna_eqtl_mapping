@@ -1,11 +1,57 @@
-reference_genotype: "col0"
+datasets:
+  col0xmany:
+    reference_genotype: "col0"
+    parent2_accessions:
+      - "db1"
+      - "kar1"
+      - "ms0"
+      - "rubezhnoe1"
+      - "tsu0"
+  col0xler:
+    reference_genotype: "col0"
+    parent2_accessions:
+      - "ler"
+  lerxcol0:
+    reference_genotype: "ler"
+    parent2_accessions:
+      - "col0"
+  col0xdb1:
+    reference_genotype: "col0"
+    parent2_accessions:
+      - "db1"
+  db1xcol0:
+    reference_genotype: "db1"
+    parent2_accessions:
+      - "col0"
+  col0xest0tsu0:
+    reference_genotype: "col0"
+    parent2_accessions:
+      - "est0"
+      - "tsu0"
+  col0xoy0cvi0:
+    reference_genotype: "col0"
+    parent2_accessions:
+      - "oy0"
+      - "cvi0"
 genome_fasta_fns:
-  col0: '../annotations/col0.fa'
+  col0: '../annotations/col0_cc.fa'
+  ler: '../annotations/ler.fa'
   db1: '../annotations/db1.fa'
   kar1: '../annotations/kar1.fa'
-  rubezhnoe1: '../annotations/rubezhnoe1.fa'
   ms0: '../annotations/ms0.fa'
+  rubezhnoe1: '../annotations/rubezhnoe1.fa'
   tsu0: '../annotations/tsu0.fa'
+  est0: '../annotations/est0.fa'
+  oy0: '../annotations/oy0.fa'
+  cvi0: '../annotations/cvi0.fa'
 gtf_fns:
-  col0: '../annotations/col0.gtf'
+  col0: '../annotations/col0_cc.gtf'
+  ler: '../annotations/ler.gtf'
+  db1: '../annotations/db1.gtf'
+  kar1: '../annotations/kar1.gtf'
+  ms0: '../annotations/ms0.gtf'
+  rubezhnoe1: '../annotations/rubezhnoe1.gtf'
+  tsu0: '../annotations/tsu0.gtf'
+organellar_genome_fasta_fn: '../annotations/organellar.fa'
+organellar_gtf_fn: '../annotations/organellar.gtf'
 barcode_whitelist: '../annotations/3M-february-2018.txt'

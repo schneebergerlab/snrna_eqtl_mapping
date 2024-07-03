@@ -1,29 +1,53 @@
-rule build_STAR_index_reference:
+def get_star_consensus_index_input(wc):
+    ref_name = config['datasets'][wc.cond]['reference_genotype']
+    parent2_accessions = config['datasets'][wc.cond]['parent2_accessions']
+    input_ = {
+        'fasta_fn': ancient(config['genome_fasta_fns'][ref_name]),
+        'organellar_fasta_fn': ancient(config['organellar_genome_fasta_fn']),
+        'gtf_fn': ancient(config['gtf_fns'][ref_name]),
+        'organellar_gtf_fn': ancient(config['organellar_gtf_fn']),
+    }
+    if len(parent2_accessions) > 1:
+        input_['vcf_fn'] = 'annotation/diploid/vcf/{cond}.consensus.vcf'
+    return input_ 
+
+
+rule build_STAR_index_consensus:
     '''Create the index required for alignment with STAR'''
     input:
-        fasta_fn=ancient(config['genome_fasta_fns'][config['reference_genotype']]),
-        gtf_fn=ancient(config['gtf_fns'][config['reference_genotype']]),
+        unpack(get_star_consensus_index_input)
     output:
-        directory('annotation/reference/STAR_index')
-    threads: 24
+        directory('annotation/reference/{cond}_STAR_index')
+    threads: 12
     resources:
         mem_mb=12 * 1024,
         queue='ioheavy'
     params:
         overhang=150,
+        vcf_flag=lambda wc, input: f'--genomeTransformVCF {input.vcf_fn}' if hasattr(input, 'vcf_fn') else '',
+        transform_flag=lambda wc, input: '--genomeTransformType Haploid' if hasattr(input, 'vcf_fn') else '',
     conda:
         'env_yamls/star.yaml'
     shell:
         '''
         mkdir {output};
+        cat {input.fasta_fn} {input.organellar_fasta_fn} > \
+          annotation/diploid/{wildcards.cond}_fullref.fa
+        cat {input.gtf_fn} {input.organellar_gtf_fn} > \
+          annotation/diploid/{wildcards.cond}_fullref.gtf
         STAR \
           --runThreadN {threads} \
           --runMode genomeGenerate \
           --genomeDir {output} \
-          --genomeFastaFiles {input.fasta_fn} \
-          --sjdbGTFfile {input.gtf_fn} \
+          --genomeFastaFiles annotation/diploid/{wildcards.cond}_fullref.fa \
+          --sjdbGTFfile annotation/diploid/{wildcards.cond}_fullref.gtf \
+          {params.vcf_flag} \
+          {params.transform_flag} \
           --genomeSAindexNbases 12 \
           --sjdbOverhang {params.overhang}
+
+        rm annotation/diploid/{wildcards.cond}_fullref.fa \
+           annotation/diploid/{wildcards.cond}_fullref.gtf
         '''
 
 
@@ -68,7 +92,7 @@ def expand_sample_name_from_cond(pattern):
 
 
 
-rule STARsolo_reference:
+rule STARsolo_consensus:
     '''
     map reads with STAR spliced aligner
     
@@ -78,7 +102,7 @@ rule STARsolo_reference:
     input:
         read_barcode=expand_sample_name_from_cond('trimmed_data/{sample_name}.1_barcode.fastq.gz'),
         mate=expand_sample_name_from_cond('raw_data/{sample_name}.2.fastq.gz'),
-        index='annotation/reference/STAR_index',
+        index='annotation/reference/{cond}_STAR_index',
         barcode_whitelist=ancient(config['barcode_whitelist']),
     output:
         bam='aligned_data/reference/{cond}.sorted.bam',
@@ -89,8 +113,9 @@ rule STARsolo_reference:
     params:
         read_barcode=lambda wc, input: ','.join(f'${{TOPDIR}}/{fn}' for fn in input.read_barcode),
         mate=lambda wc, input: ','.join(f'${{TOPDIR}}/{fn}' for fn in input.mate),
-        sort_mem=lambda wc, resources: int((resources.mem_mb - 4096) * 1e6),
-        n_files=lambda wc, threads: threads * 150 + 200
+        sort_mem=lambda wc, resources: (resources.mem_mb - 4096) * 1_000_000,
+        n_files=lambda wc, threads: threads * 150 + 200,
+        transform_flag=lambda wc: '--genomeTransformOutput SAM SJ Quant' if len(config['datasets'][wc.cond]['parent2_accessions']) > 1 else ''
     log:
         progress='logs/{cond}.STAR_progress.log',
         final='logs/{cond}.STAR_final.log',
@@ -128,7 +153,8 @@ rule STARsolo_reference:
           --outSAMtype BAM SortedByCoordinate \
           --outBAMsortingBinsN 150 \
           --limitBAMsortRAM {params.sort_mem} \
-          --outSAMattributes NH HI AS nM CB UB sS sQ
+          --outSAMattributes NH HI AS nM CB UB UR sS sQ \
+          {params.transform_flag}
 
         cd $TOPDIR
         mv ${{STAR_TMP_DIR}}/Aligned.sortedByCoord.out.bam {output.bam}
@@ -151,7 +177,7 @@ rule cb_whitelist:
         whitelist='aligned_data/reference/{cond}.cb_whitelist.txt',
     threads: 1
     resources:
-        mem_mb=lambda wc, threads: threads * 1024
+        mem_mb=10_000
     conda:
         'env_yamls/pomegranate.yaml'
     shell:
@@ -166,7 +192,7 @@ rule cellsnp_lite:
     input:
         bam='aligned_data/reference/{cond}.sorted.bam',
         barcodes='aligned_data/reference/{cond}.cb_whitelist.txt',
-        vcf='annotation/reference/vcf/{cond}.syri.vcf.gz'
+        vcf='annotation/diploid/vcf/{cond}.cellsnplite.vcf.gz'
     output:
         vcf='cb_snp_counts/{cond}/cellSNP.base.vcf',
         bc='cb_snp_counts/{cond}/cellSNP.samples.tsv',
@@ -192,7 +218,7 @@ rule cellsnp_lite:
 
 rule assign_genotypes:
     input:
-        vcf='annotation/reference/vcf/{cond}.syri.vcf.gz',
+        vcf='annotation/diploid/vcf/{cond}.cellsnplite.vcf.gz',
         bc='cb_snp_counts/{cond}/cellSNP.samples.tsv',
         ad='cb_snp_counts/{cond}/cellSNP.tag.AD.mtx',
         dp='cb_snp_counts/{cond}/cellSNP.tag.DP.mtx',
@@ -218,8 +244,8 @@ rule demux_genotypes:
         bam='aligned_data/reference/{cond}.sorted.bam',
         geno='cb_genotypes/{cond}.geno.tsv',
     output:
-        read1='demuxed_data/{{cond}}.{parent1}__vs__{{parent2}}.1_barcode.fastq.gz'.format(parent1=config['reference_genotype']),
-        read2='demuxed_data/{{cond}}.{parent1}__vs__{{parent2}}.2.fastq.gz'.format(parent1=config['reference_genotype']),
+        read1='demuxed_data/{cond}.{parent1}__vs__{parent2}.1_barcode.fastq.gz',
+        read2='demuxed_data/{cond}.{parent1}__vs__{parent2}.2.fastq.gz',
     threads: 9
     resources:
         mem_mb=10_000,

@@ -2,6 +2,8 @@ import os
 import random
 from collections import defaultdict, Counter
 
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+
 import numpy as np
 from scipy.io import mmread
 import pandas as pd
@@ -10,44 +12,7 @@ import pysam
 from joblib import Parallel, delayed
 import click
 
-
-def parse_snps(vcf_fn):
-    with pysam.VariantFile(vcf_fn) as vcf:
-        accessions = list(vcf.header.samples)
-        parsed_snps = []
-        for snp in vcf.fetch():
-            acc_alleles = defaultdict(list)
-            acc_alleles[snp.ref] = []
-            for acc, var in snp.samples.items():
-                alt = var.alleles[0]
-                acc_alleles[alt].append(acc)
-            try:
-                alt = [a for a in acc_alleles if a != snp.ref][0]
-            except IndexError:
-                alt = None
-            parsed_snps.append([snp.contig, snp.pos, snp.ref, alt, tuple(acc_alleles[snp.ref]), tuple(acc_alleles[alt])])
-        return parsed_snps, accessions
-
-
-def read_cb_whitelist(barcode_fn):
-    with open(barcode_fn) as f:
-        cb_whitelist = [cb.strip() for cb in f.readlines()]
-    return cb_whitelist
-
-
-def parse_cellsnplite(vcf_fn, barcode_fn, ad_fn, dp_fn):
-    alt_mm = mmread(ad_fn)
-    dp_mm = mmread(dp_fn)
-    ref_mm = dp_mm - alt_mm
-    del dp_mm
-    barcodes = read_cb_whitelist(barcode_fn)
-    snps, accessions = parse_snps(vcf_fn)
-    snps = pd.MultiIndex.from_tuples(snps, names=['chrom', 'pos', 'ref', 'alt', 'ref_accs', 'alt_accs'])
-    alt_mm = pd.DataFrame.sparse.from_spmatrix(alt_mm, columns=barcodes, index=snps)
-    ref_mm = pd.DataFrame.sparse.from_spmatrix(ref_mm, columns=barcodes, index=snps)
-    counts = pd.concat({'ref_count': ref_mm, 'alt_count': alt_mm}, axis=1)
-    counts.columns = counts.columns.reorder_levels([1, 0])
-    return counts, accessions
+from singlecell_snptools.io import parse_snps, parse_cellsnplite
 
 
 def iter_cb(snp_counts):
@@ -60,7 +25,8 @@ def iter_cb(snp_counts):
             ]))
         ]
         cb_snp_counts = cb_snp_counts.sparse.to_dense().reset_index()
-        yield cb, cb_snp_counts
+        if len(cb_snp_counts):
+            yield cb, cb_snp_counts
 
 
 def update_probs(probs, sample_markers):
@@ -94,6 +60,8 @@ def bootstrap_genotype_assignment(cb, cb_snp_counts, accessions,
                                   bootstrap_sample_size, n_bootstraps):
     prob_boots = []
     cb_snp_counts = cb_snp_counts.query('alt_count > ref_count')
+    if not len(cb_snp_counts):
+        return cb, None, 1, 0.0
     bootstrap_sample_size = min(len(cb_snp_counts), bootstrap_sample_size)
     for _ in range(n_bootstraps):
         samp = cb_snp_counts.sample(bootstrap_sample_size, replace=True)
@@ -131,7 +99,7 @@ def parallel_assign_genotypes(snp_counts, accessions,
     return pd.DataFrame(
         assignments,
         columns=['cell_barcode', 'assignment', 'nmarkers', 'logprob']
-    )
+    ).query('assignment == assignment') # removes NoneType assignments
 
 
 @click.command()

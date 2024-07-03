@@ -6,30 +6,26 @@ include: '../rules/diploid.snakefile'
 include: '../rules/crossovers.snakefile'
 include: '../rules/notebooks.snakefile'
 
-SAMPLE_NAMES = glob_wildcards('raw_data/{sample_name}.1.fastq.gz').sample_name
-REF_NAME = config['reference_genotype']
-CONDS = set([sn.rsplit('_', 1)[0] for sn in SAMPLE_NAMES])
-COMPS = [
-    f'{REF_NAME}__vs__{parent2}' for parent2 in config['genome_fasta_fns'] if parent2 != REF_NAME
-]
+
+def expand_dataset_comps(file_patterns):
+    fns = []
+    for cond, ds in config['datasets'].items():
+        comps = expand('{parent1}__vs__{parent2}',
+                       parent1=ds['reference_genotype'],
+                       parent2=ds['parent2_accessions'])
+        fns += expand(file_patterns, sample_name=cond, comp=comps)
+    return fns
 
 rule all:
     input:
         expand(
-            [
-                'aligned_data/diploid/{cond}.{comp}.sorted.bam',
-                'cb_crossovers/{cond}.tsv',
-                'cb_stats/{cond}.tsv',
-                'eqtls/{cond}.tsv',
-            ],
-            cond=CONDS,
-            comp=COMPS
+           [
+               'eqtls/{sample_name}.all.eqtls.tsv',
+               'figures/{nb_type}_figures_{sample_name}'
+           ],
+           sample_name=config['datasets'],
+           nb_type=['expression', 'genotyping', 'crossover', 'eqtl', 'hotspot']
         ),
-        expand(
-            'figures/{figtype}_figures_{cond}',
-            figtype=[
-                'expression', 'genotyping',
-                'crossover', 'eqtl'
-            ],
-            cond=CONDS,
+        expand_dataset_comps(
+            ['eqtls/{sample_name}.{comp}.eqtls.tsv'],
         )

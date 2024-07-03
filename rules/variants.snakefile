@@ -20,7 +20,7 @@ rule minimap2_wga:
         'env_yamls/minimap2.yaml'
     shell:
         '''
-         minimap2 --eqx -t 8 -ax asm20 \
+         minimap2 --eqx -t 8 -ax asm20 -z1000,100 --no-end-flt \
            {input.parent1} {input.parent2}  | \
         samtools view -bS | \
         samtools sort -o - - > {output}
@@ -39,15 +39,68 @@ rule run_syri:
         unpack(get_syri_input)
     output:
         vcf='annotation/diploid/vcf/{comp}.syri.vcf',
+        syri='annotation/diploid/vcf/{comp}.syri.out',
     resources:
         mem_mb=lambda wc, threads: 2048 * threads,
         queue='ioheavy'
     conda:
-        'env_yamls/syri.yaml'
+        'env_yamls/msyd.yaml'
+    params:
+        acc=lambda wc: wc.comp.split('__vs__')[1]
     shell:
         '''
         syri -F B -f --hdrseq --dir annotation/diploid/vcf --prefix {wildcards.comp}. \
-          -c {input.bam} -q {input.parent2} -r {input.parent1}
+          -c {input.bam} -q {input.parent2} -r {input.parent1} --samplename {params.acc}
+        '''
+
+
+def get_msyd_input(wc):
+    accs = config['datasets'][wc.cond]['parent2_accessions']
+    ref_name = config['datasets'][wc.cond]['reference_genotype']
+    return {
+        'bams': expand('annotation/diploid/wga/{ref_name}__vs__{accession}.bam',
+                       ref_name=ref_name, accession=accs),
+        'syri': expand('annotation/diploid/vcf/{ref_name}__vs__{accession}.syri.out',
+                       ref_name=ref_name, accession=accs),
+        'vcf': expand('annotation/diploid/vcf/{ref_name}__vs__{accession}.syri.vcf',
+                       ref_name=ref_name, accession=accs),
+        'fasta': [config['genome_fasta_fns'][acc] for acc in accs],
+    }
+    
+
+rule msyd_input:
+    input:    
+        unpack(get_msyd_input)
+    output:
+        cfg=temp('annotation/diploid/vcf/{cond}.msyd_config.tsv')
+    group: 'msyd'
+    run:
+        ref_name = config['datasets'][wildcards.cond]['reference_genotype']
+        with open(output.cfg, 'w') as f:
+            f.write('#name\taln\tsyri\tvcf\tgenome\n')
+            for accession in config['datasets'][wildcards.cond]['parent2_accessions']:
+                f.write(
+                    f'{accession}\t'
+                    f'annotation/diploid/wga/{ref_name}__vs__{accession}.bam\t'
+                    f'annotation/diploid/vcf/{ref_name}__vs__{accession}.syri.out\t'
+                    f'annotation/diploid/vcf/{ref_name}__vs__{accession}.syri.vcf\t'
+                    f'{config["genome_fasta_fns"][accession]}\n'
+                )
+
+
+rule run_msyd:
+    input:
+        cfg='annotation/diploid/vcf/{cond}.msyd_config.tsv',
+        ref=lambda wc: ancient(config['genome_fasta_fns'][config['datasets'][wc.cond]['reference_genotype']])
+    output:
+        pff='annotation/diploid/vcf/{cond,\w+}.pansyn.pff',
+        vcf='annotation/diploid/vcf/{cond,\w+}.vcf',
+    group: 'msyd'
+    conda:
+        'env_yamls/msyd.yaml'
+    shell:
+        '''
+        msyd call --core -i {input.cfg} -r {input.ref} -o {output.pff} -m {output.vcf}
         '''
 
 
@@ -66,62 +119,51 @@ rule convert_vcf_for_star:
         '''
 
 
-def get_merge_input(wc):
-    ref_name = config['reference_genotype']
-    vcfs = expand(
-        'annotation/diploid/vcf/{parent1}__vs__{parent2}.syri.vcf',
-        parent1=ref_name,
-        parent2=[parent2 for parent2 in config['genome_fasta_fns'] if parent2 != ref_name]
-    )
-    return {'vcfs': vcfs, 'fai': ancient(config['genome_fasta_fns'][config['reference_genotype']] + '.fai')}
-
-
-rule merge_snps_for_genotyping:
+rule filter_snps_for_star_consensus:
     input:
-        unpack(get_merge_input)
+        vcf='annotation/diploid/vcf/{cond}.vcf'
     output:
-        'annotation/reference/vcf/{cond}.syri.vcf.gz',
-    params:
-        gz_vcf=lambda wc, input: [fn + '.gz' for fn in input.vcfs],
-        gz_vcf_idx=lambda wc, input: [fn + '.gz.tbi' for fn in input.vcfs],
-        filt_vcf=lambda wc, input: [fn + '.filt.vcf.gz' for fn in input.vcfs],
-        filt_vcf_idx=lambda wc, input: [fn + '.filt.vcf.gz.tbi' for fn in input.vcfs],
+        vcf='annotation/diploid/vcf/{cond,\w+}.consensus.vcf',
     conda:
         'env_yamls/pysam.yaml'
-    resources:
-        mem_mb=10_000
+    params:
+        min_ac=lambda wc: len(config['datasets'][wc.cond]['parent2_accessions']) // 2 + 1,
+        max_indel_size=50,
     shell:
+        r'''
+        bcftools annotate \
+          --exclude 'ALT ~ "CORESYN"' \
+          --remove "FORMAT/CHR,FORMAT/START,FORMAT/END,INFO/PID" \
+          {input.vcf} |
+        grep -v "^##ALT" | grep -v "^##INFO" | \
+        bcftools sort | \
+        bcftools filter -S0 -e 'GT=="."' | \
+        bcftools view -G -M2 \
+          --min-ac {params.min_ac} \
+          -e "STRLEN(REF)>{params.max_indel_size} || STRLEN(ALT)>{params.max_indel_size}" \
+        > {output.vcf}
         '''
-        awk -v OFS='\\t' '{{print $1, "0", $2}}' {input.fai} > {output}.syn.bed
-        for VCF in {input.vcfs}; do
-          awk -v OFS='\\t' \
-            'substr($3, 1, 5) == "SYNAL" \
-            {{split($8, INFO, /[;=]/); print $1, $2, INFO[2]}}' $VCF | \
-          bedtools merge -i stdin | \
-          bedtools intersect -a {output}.syn.bed -b stdin > {output}.syn.tmp.bed
-          mv {output}.syn.tmp.bed {output}.syn.bed
-        done
-        for VCF in {input.vcfs}; do
-          BASENAME="${{VCF##*__vs__}}"
-          PARENT2="${{BASENAME%%.syri.vcf}}"
-          bgzip -c $VCF > "${{VCF}}.gz"
-          tabix -p vcf "${{VCF}}.gz"
-          bcftools view -R {output}.syn.bed -i 'TYPE="snp"' "${{VCF}}.gz" | \
-          awk -v SAMPLE=$PARENT2 -v OFS='\\t' \
-            '{{if ($0 ~ /^##/) {{print}} \
-               else if ($0 ~ /^#/) {{print "##FORMAT=<ID=GT,Number=1,Type=String>"; print $0, "FORMAT", SAMPLE}} \
-               else {{print $1, $2, $3, $4, $5, $6, $7, ".", "GT", "1/1"}}}}' | \
-          bgzip > "${{VCF}}.filt.vcf.gz"
-          tabix -p vcf "${{VCF}}.filt.vcf.gz"
-        done
-        rm {output}.syn.bed
-        bcftools merge -0 -O z {params.filt_vcf} > {output}.temp.vcf.gz
-        rm {params.gz_vcf}
-        rm {params.gz_vcf_idx}
-        rm {params.filt_vcf}
-        rm {params.filt_vcf_idx}
-        tabix -p vcf {output}.temp.vcf.gz
-        bcftools view -M2 -O z {output}.temp.vcf.gz > {output}
-        rm {output}.temp.vcf.gz*
-        tabix -p vcf {output}
+
+
+rule filter_snps_for_cellsnplite:
+    input:
+        vcf='annotation/diploid/vcf/{cond}.vcf'
+    output:
+        vcf='annotation/diploid/vcf/{cond,\w+}.cellsnplite.vcf.gz',
+    conda:
+        'env_yamls/pysam.yaml'
+    shell:
+        r'''
+        bcftools annotate \
+          --exclude 'ALT ~ "CORESYN"' \
+          --remove "FORMAT/CHR,FORMAT/START,FORMAT/END,INFO/PID" \
+          {input.vcf} |
+        grep -v "^##ALT" | grep -v "^##INFO" | \
+        bcftools sort | \
+        bcftools filter -S0 -e 'GT=="."' | \
+        bcftools view -M2 \
+          -i 'TYPE="snp"' \
+          -O z \
+        > {output.vcf}
+        tabix -p vcf {output.vcf}
         '''
