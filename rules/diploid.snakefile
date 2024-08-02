@@ -67,8 +67,8 @@ def STAR_diploid_input(wc):
     parent2_accs = config['datasets'][wc.cond]['parent2_accessions']
     if len(parent2_accs) > 1:
         return dict(
-            read_barcode='demuxed_data/{cond}.{comp}.1_barcode.fastq.gz',
-            mate='demuxed_data/{cond}.{comp}.2.fastq.gz',
+            read_barcode=['demuxed_data/{cond}.{comp}.1_barcode.fastq.gz'],
+            mate=['demuxed_data/{cond}.{comp}.2.fastq.gz'],
             index='annotation/diploid/{comp}_STAR_index',
             barcode_whitelist=ancient(config['barcode_whitelist']),
         )

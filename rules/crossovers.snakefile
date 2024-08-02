@@ -37,7 +37,8 @@ rule detect_crossovers:
     output:
         cb_stats='cb_crossovers/{cond}.{comp}.cb_stats.tsv',
         co_probs='cb_crossovers/{cond}.{comp}.co_probs.tsv',
-    threads: 20
+        markers='cb_crossovers/{cond}.{comp}.co_markers.json',
+    threads: 10
     resources:
         mem_mb=50_000,
         queue='ioheavy'
@@ -48,6 +49,7 @@ rule detect_crossovers:
         python ../scripts/detect_crossovers_binned.py -p {threads} \
           -w {input.cb_whitelist} \
           -m {input.model} \
+          --output-marker-json-fn {output.markers} \
           -o cb_crossovers/{wildcards.cond}.{wildcards.comp} \
           {input.bam}
         '''

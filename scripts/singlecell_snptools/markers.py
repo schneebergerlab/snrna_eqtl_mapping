@@ -70,22 +70,29 @@ def get_co_markers_from_star_diploid_bam(bam_fn, bin_size, whitelist=None, organ
     return co_markers, seen_cb
 
 
-def estimate_bg_signal(co_markers, chrom_sizes, bin_size=25_000):
+def estimate_bg_signal(co_markers, chrom_sizes, bin_size=25_000, max_imbalance_mask=0.9):
     bg_signal = {}
     for chrom, cs in chrom_sizes.items():
         nbins = int(cs // bin_size + bool(cs % bin_size))
         bg_signal[chrom] = np.zeros(shape=(nbins, 2), dtype=np.float64)
 
+    tot = 0
     for chrom_co_markers in co_markers.values():
         for chrom, m in chrom_co_markers.items():
-            bg_signal[chrom] += m.astype(np.float64)
+            m = m.astype(np.float64)
+            bg_signal[chrom] += m
+            tot += m.sum()
+    mask = {}
     for chrom, sig in bg_signal.items():
-        bg_signal[chrom] = sig / sig.sum()
-    return bg_signal
+        bg_signal[chrom] = sig / tot
+        ratio = bg_signal[chrom][:, 0] / bg_signal[chrom].sum(axis=1)
+        m = (ratio > max_imbalance_mask) | (ratio < (1 - max_imbalance_mask))
+        mask[chrom] = m
+    return bg_signal, mask
 
 
-def estimate_and_subtract_background(co_markers, chrom_sizes, bin_size=25_000, window_size=1_000_000, max_bin_count=20):
-    bg_signal = estimate_bg_signal(co_markers, chrom_sizes, bin_size)
+def estimate_and_subtract_background(co_markers, chrom_sizes, bin_size=25_000, window_size=1_000_000, max_bin_count=20, max_imbalance_mask=0.9):
+    bg_signal, imbalance_mask = estimate_bg_signal(co_markers, chrom_sizes, bin_size)
     perc_contamination = {}
     co_markers_bg_subtracted = {}
     ws = window_size // bin_size
@@ -102,10 +109,12 @@ def estimate_and_subtract_background(co_markers, chrom_sizes, bin_size=25_000, w
         bg_subtracted = {}
         for chrom, m in cb_co_markers.items():
             bg = pc * m.sum() * bg_signal[chrom]
-            bg_subtracted[chrom] = np.minimum(
+            m_sub = np.minimum(
                 np.round(np.maximum(m.astype(np.float64) - bg, 0)),
                 max_bin_count
             ).astype(np.uint16)
+            m_sub[imbalance_mask[chrom]] = 0
+            bg_subtracted[chrom] = m_sub
         co_markers_bg_subtracted[(fn_idx, cb)] = bg_subtracted
     return perc_contamination, co_markers_bg_subtracted
 
@@ -115,8 +124,12 @@ def get_marker_ranges(co_markers, bin_size):
     for (fn_idx, cb), cb_co_markers in co_markers.items():
         for chrom, m in cb_co_markers.items():
             idx, = np.nonzero(m.sum(axis=1))
-            left_pos, right_pos = idx[0] * bin_size, (idx[-1] + 1) * bin_size
+            if len(idx):
+                left_pos, right_pos = idx[0] * bin_size, (idx[-1] + 1) * bin_size
+            else:
+                left_pos, right_pos = 0, 0
             marker_ranges.append([fn_idx, cb, chrom, left_pos, right_pos])
+            
     return pd.DataFrame(marker_ranges, columns=['fn_idx', 'cb', 'chrom', 'left_pos', 'right_pos'])
 
 

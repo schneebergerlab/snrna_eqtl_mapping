@@ -185,7 +185,7 @@ def _get_haplotype_position(eqtls, hap_probs, haplotype_type, chrom=None, pos=No
             # take best hit on chrom
             haplotype = eqtls.loc[eqtls.query('chrom == @chrom').lrt_pval.idxmin()]
         name= f'Haplotype at {haplotype.chrom}:{haplotype.pos}'
-    hap = hap_probs.loc[:, pd.IndexSlice[haplotype.chrom, str(haplotype.pos)]]
+    hap = hap_probs.loc[:, pd.IndexSlice[haplotype.chrom, haplotype.pos]]
     return (hap > 0.5).map({False: 'Parent 1', True: 'Parent 2'}).rename(name)
 
 
